@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import os
 import sys
+import json
 import aiohttp
 import asyncio
 from aiohttp import web
@@ -45,6 +46,25 @@ bot = commands.Bot(command_prefix="S!", intents=intents)
 messages_log = defaultdict(list)
 logs_list = defaultdict(list)
 log_channels = {}
+LOGS_FILE = "logs_cache.json"
+
+def save_logs_to_file():
+    data = {}
+    for guild_id, logs in logs_list.items():
+        data[str(guild_id)] = logs
+    with open(LOGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def load_logs_from_file():
+    global logs_list
+    if os.path.exists(LOGS_FILE):
+        try:
+            with open(LOGS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for guild_id, logs in data.items():
+                    logs_list[int(guild_id)] = logs
+        except:
+            pass
 
 def get_font(size):
     try:
@@ -92,6 +112,7 @@ def add_log(guild_id, log_type, user, channel, content):
     logs_list[guild_id].append(log_entry)
     if len(logs_list[guild_id]) > 1000:
         logs_list[guild_id] = logs_list[guild_id][-800:]
+    save_logs_to_file()
 
 @bot.event
 async def on_guild_channel_create(channel):
@@ -158,6 +179,7 @@ async def on_message_edit(before, after):
 
 @bot.event
 async def on_ready():
+    load_logs_from_file()
     print(f'Bot ready: {bot.user}')
     if not os.path.exists("assets"):
         os.makedirs("assets")
