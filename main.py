@@ -26,12 +26,22 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="S!", intents=intents)
 
-# Хранилище в памяти (для Render без БД)
+# Хранилище в памяти
 messages_log = defaultdict(list)
 logs_list = defaultdict(list)
 nick_history = defaultdict(list)
 reactions_given = defaultdict(int)
 reactions_received = defaultdict(int)
+
+# ========== ШРИФТЫ (Arial) ==========
+def get_font(size):
+    try:
+        return ImageFont.truetype("assets/arial.ttf", size)
+    except:
+        try:
+            return ImageFont.truetype("arial.ttf", size)
+        except:
+            return ImageFont.load_default()
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
@@ -80,14 +90,11 @@ class StatsView(View):
         img = bg.copy()
         draw = ImageDraw.Draw(img)
         
-        try:
-            font_title = ImageFont.truetype("segoeui.ttf", 30)
-            font_large = ImageFont.truetype("segoeuib.ttf", 52)
-            font_normal = ImageFont.truetype("segoeui.ttf", 22)
-            font_small = ImageFont.truetype("segoeui.ttf", 18)
-            font_bold = ImageFont.truetype("segoeuib.ttf", 22)
-        except:
-            font_title = font_large = font_normal = font_small = font_bold = ImageFont.load_default()
+        font_title = get_font(30)
+        font_large = get_font(52)
+        font_normal = get_font(22)
+        font_small = get_font(18)
+        font_bold = get_font(22)
         
         margin, radius = 25, 25
         now = datetime.now(timezone.utc)
@@ -201,13 +208,10 @@ class LeaderBoardView(View):
         img = bg.copy()
         draw = ImageDraw.Draw(img)
         
-        try:
-            font_title = ImageFont.truetype("segoeui.ttf", 30)
-            font_normal = ImageFont.truetype("segoeui.ttf", 20)
-            font_small = ImageFont.truetype("segoeui.ttf", 17)
-            font_bold = ImageFont.truetype("segoeuib.ttf", 20)
-        except:
-            font_title = font_normal = font_small = font_bold = ImageFont.load_default()
+        font_title = get_font(30)
+        font_normal = get_font(20)
+        font_small = get_font(17)
+        font_bold = get_font(20)
         
         margin, radius = 25, 25
         now = datetime.now(timezone.utc)
@@ -352,14 +356,11 @@ class ProfileView(View):
         img = bg.copy()
         draw = ImageDraw.Draw(img)
         
-        try:
-            font_title = ImageFont.truetype("segoeui.ttf", 26)
-            font_large = ImageFont.truetype("segoeuib.ttf", 34)
-            font_normal = ImageFont.truetype("segoeui.ttf", 18)
-            font_small = ImageFont.truetype("segoeui.ttf", 14)
-            font_bold = ImageFont.truetype("segoeuib.ttf", 19)
-        except:
-            font_title = font_large = font_normal = font_small = font_bold = ImageFont.load_default()
+        font_title = get_font(26)
+        font_large = get_font(34)
+        font_normal = get_font(18)
+        font_small = get_font(14)
+        font_bold = get_font(19)
         
         margin, radius = 20, 25
         now = datetime.now(timezone.utc)
@@ -528,12 +529,9 @@ class LogsView(View):
         img = bg.copy()
         draw = ImageDraw.Draw(img)
         
-        try:
-            font_title = ImageFont.truetype("segoeui.ttf", 30)
-            font_normal = ImageFont.truetype("segoeui.ttf", 18)
-            font_small = ImageFont.truetype("segoeui.ttf", 14)
-        except:
-            font_title = font_normal = font_small = ImageFont.load_default()
+        font_title = get_font(30)
+        font_normal = get_font(18)
+        font_small = get_font(14)
         
         margin, radius = 25, 25
         logs = self.logs_list[self.guild_id].copy()
@@ -638,13 +636,10 @@ class HelpView(View):
         img = bg.copy()
         draw = ImageDraw.Draw(img)
         
-        try:
-            font_title = ImageFont.truetype("segoeui.ttf", 36)
-            font_normal = ImageFont.truetype("segoeui.ttf", 24)
-            font_small = ImageFont.truetype("segoeui.ttf", 20)
-            font_bold = ImageFont.truetype("segoeuib.ttf", 26)
-        except:
-            font_title = font_normal = font_small = font_bold = ImageFont.load_default()
+        font_title = get_font(36)
+        font_normal = get_font(24)
+        font_small = get_font(20)
+        font_bold = get_font(26)
         
         margin, radius = 25, 25
         dark_color = (40, 44, 52, 180)
