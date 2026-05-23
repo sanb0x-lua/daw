@@ -8,6 +8,7 @@ import io
 import os
 import sys
 import json
+import sqlite3
 import aiohttp
 import asyncio
 from aiohttp import web
@@ -44,27 +45,106 @@ intents.reactions = True
 bot = commands.Bot(command_prefix="S!", intents=intents)
 
 messages_log = defaultdict(list)
-logs_list = defaultdict(list)
 log_channels = {}
-LOGS_FILE = "logs_cache.json"
 
-def save_logs_to_file():
-    data = {}
-    for guild_id, logs in logs_list.items():
-        data[str(guild_id)] = logs
-    with open(LOGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+DB_FILE = "bot_data.db"
 
-def load_logs_from_file():
-    global logs_list
-    if os.path.exists(LOGS_FILE):
-        try:
-            with open(LOGS_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for guild_id, logs in data.items():
-                    logs_list[int(guild_id)] = logs
-        except:
-            pass
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS logs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  guild_id INTEGER,
+                  type TEXT,
+                  user_name TEXT,
+                  channel TEXT,
+                  content TEXT,
+                  time TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS messages
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  guild_id INTEGER,
+                  user_name TEXT,
+                  channel_name TEXT,
+                  time TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS log_channels
+                 (guild_id INTEGER PRIMARY KEY,
+                  channel_id INTEGER)''')
+    conn.commit()
+    conn.close()
+
+def add_log_to_db(guild_id, log_type, user_name, channel, content, time_str):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO logs (guild_id, type, user_name, channel, content, time) VALUES (?, ?, ?, ?, ?, ?)",
+              (guild_id, log_type, user_name, channel, content, time_str))
+    conn.commit()
+    conn.close()
+
+def get_logs_from_db(guild_id, limit=1000):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT type, user_name, channel, content, time FROM logs WHERE guild_id = ? ORDER BY id DESC LIMIT ?", (guild_id, limit))
+    rows = c.fetchall()
+    conn.close()
+    logs = []
+    for row in rows:
+        logs.append({
+            "type": row[0],
+            "user": row[1],
+            "channel": row[2],
+            "content": row[3],
+            "time": row[4]
+        })
+    return logs
+
+def add_message_to_db(guild_id, user_name, channel_name, time):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO messages (guild_id, user_name, channel_name, time) VALUES (?, ?, ?, ?)",
+              (guild_id, user_name, channel_name, time))
+    conn.commit()
+    conn.close()
+
+def get_messages_from_db(guild_id, days=None):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    if days:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        c.execute("SELECT user_name, channel_name, time FROM messages WHERE guild_id = ? AND time > ?", (guild_id, cutoff))
+    else:
+        c.execute("SELECT user_name, channel_name, time FROM messages WHERE guild_id = ?", (guild_id,))
+    rows = c.fetchall()
+    conn.close()
+    messages = []
+    for row in rows:
+        messages.append({
+            "user": row[0],
+            "channel": row[1],
+            "time": datetime.fromisoformat(row[2]) if isinstance(row[2], str) else row[2]
+        })
+    return messages
+
+def set_log_channel_db(guild_id, channel_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO log_channels (guild_id, channel_id) VALUES (?, ?)", (guild_id, channel_id))
+    conn.commit()
+    conn.close()
+
+def get_log_channel_db(guild_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT channel_id FROM log_channels WHERE guild_id = ?", (guild_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def delete_log_channel_db(guild_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM log_channels WHERE guild_id = ?", (guild_id,))
+    conn.commit()
+    conn.close()
 
 def get_font(size):
     try:
@@ -102,17 +182,8 @@ def get_msk_time():
     return datetime.now(timezone.utc + timedelta(hours=3)).strftime("%d.%m %H:%M:%S")
 
 def add_log(guild_id, log_type, user, channel, content):
-    log_entry = {
-        "type": log_type[:25],
-        "user": user[:25],
-        "channel": channel[:20] if channel else "-",
-        "content": content[:55],
-        "time": get_msk_time()
-    }
-    logs_list[guild_id].append(log_entry)
-    if len(logs_list[guild_id]) > 1000:
-        logs_list[guild_id] = logs_list[guild_id][-800:]
-    save_logs_to_file()
+    time_str = get_msk_time()
+    add_log_to_db(guild_id, log_type[:25], user[:25], channel[:20] if channel else "-", content[:55], time_str)
 
 @bot.event
 async def on_guild_channel_create(channel):
@@ -179,7 +250,7 @@ async def on_message_edit(before, after):
 
 @bot.event
 async def on_ready():
-    load_logs_from_file()
+    init_db()
     print(f'Bot ready: {bot.user}')
     if not os.path.exists("assets"):
         os.makedirs("assets")
@@ -189,22 +260,16 @@ async def on_message(message):
     if message.author.bot:
         return
     if message.guild:
-        messages_log[message.guild.id].append({
-            "user": message.author.name,
-            "channel": message.channel.name,
-            "time": datetime.now(timezone.utc)
-        })
-        if len(messages_log[message.guild.id]) > 5000:
-            messages_log[message.guild.id] = messages_log[message.guild.id][-4000:]
+        now = datetime.now(timezone.utc)
+        add_message_to_db(message.guild.id, message.author.name, message.channel.name, now.isoformat())
     await bot.process_commands(message)
 
 
 class StatsView(View):
-    def __init__(self, ctx, guild_id, messages_log):
+    def __init__(self, ctx, guild_id):
         super().__init__(timeout=120)
         self.ctx = ctx
         self.guild_id = guild_id
-        self.messages_log = messages_log
         self.current_days = 1
     
     async def send(self):
@@ -224,7 +289,7 @@ class StatsView(View):
         
         margin, radius = 25, 25
         now = datetime.now(timezone.utc)
-        guild_msgs = self.messages_log[self.guild_id]
+        guild_msgs = get_messages_from_db(self.guild_id)
         
         def msg_count(d):
             cutoff = now - timedelta(days=d)
@@ -314,11 +379,10 @@ def create_circle_avatar(avatar_img, size=35):
     return result
 
 class LeaderBoardView(View):
-    def __init__(self, ctx, guild_id, messages_log):
+    def __init__(self, ctx, guild_id):
         super().__init__(timeout=120)
         self.ctx = ctx
         self.guild_id = guild_id
-        self.messages_log = messages_log
         self.current_days = 1
         self.current_page = 0
         self.avatar_cache = {}
@@ -339,7 +403,7 @@ class LeaderBoardView(View):
         
         margin, radius = 25, 25
         now = datetime.now(timezone.utc)
-        guild_msgs = self.messages_log[self.guild_id]
+        guild_msgs = get_messages_from_db(self.guild_id)
         
         cutoff = now - timedelta(days=self.current_days)
         filtered = [m for m in guild_msgs if m["time"] > cutoff]
@@ -439,11 +503,10 @@ class LeaderBoardView(View):
             await self.ctx.send(embed=embed, file=file, view=self)
 
 class ProfileView(View):
-    def __init__(self, ctx, guild_id, messages_log, target_user):
+    def __init__(self, ctx, guild_id, target_user):
         super().__init__(timeout=120)
         self.ctx = ctx
         self.guild_id = guild_id
-        self.messages_log = messages_log
         self.target_user = target_user
         self.avatar_img = None
     
@@ -486,7 +549,7 @@ class ProfileView(View):
         
         margin, radius = 20, 25
         now = datetime.now(timezone.utc)
-        guild_msgs = self.messages_log[self.guild_id]
+        guild_msgs = get_messages_from_db(self.guild_id)
         user = self.target_user
         member = self.ctx.guild.get_member(user.id)
         
@@ -626,25 +689,25 @@ class ProfileView(View):
 async def setL(ctx, channel: discord.TextChannel = None):
     if channel is None:
         channel = ctx.channel
-    log_channels[ctx.guild.id] = channel.id
+    set_log_channel_db(ctx.guild.id, channel.id)
     await ctx.send(f"Установлено: {channel.mention}")
 
 @bot.command()
 async def delL(ctx):
-    if ctx.guild.id in log_channels:
-        del log_channels[ctx.guild.id]
+    if get_log_channel_db(ctx.guild.id):
+        delete_log_channel_db(ctx.guild.id)
         await ctx.send("Удалено!")
     else:
         await ctx.send("Иди нахуй.")
 
 class LogsView(View):
-    def __init__(self, ctx, guild_id, logs_list):
+    def __init__(self, ctx, guild_id):
         super().__init__(timeout=120)
         self.ctx = ctx
         self.guild_id = guild_id
-        self.logs_list = logs_list
         self.current_page = 0
         self.items_per_page = 10
+        self.logs_cache = []
     
     async def send(self):
         await self.update_display()
@@ -660,12 +723,11 @@ class LogsView(View):
         font_small = get_font(14)
         
         margin, radius = 25, 25
-        logs = self.logs_list[self.guild_id].copy()
-        logs.reverse()
-        total_pages = max(1, (len(logs) + self.items_per_page - 1) // self.items_per_page)
+        self.logs_cache = get_logs_from_db(self.guild_id)
+        total_pages = max(1, (len(self.logs_cache) + self.items_per_page - 1) // self.items_per_page)
         self.current_page = max(0, min(self.current_page, total_pages - 1))
         start = self.current_page * self.items_per_page
-        current_logs = logs[start:start+self.items_per_page]
+        current_logs = self.logs_cache[start:start+self.items_per_page]
         
         dark_color = (40, 44, 52, 180)
         card_layer = Image.new('RGBA', (CARD_WIDTH, CARD_HEIGHT), (0, 0, 0, 0))
@@ -678,7 +740,7 @@ class LogsView(View):
         draw.text((x+padding, y+20), "Логи сервера", fill=(255,255,255), font=font_title)
         draw.text((x+padding, y+55), f"Страница {self.current_page+1} из {total_pages}", fill=(200,200,200), font=font_small)
         
-        if not logs:
+        if not self.logs_cache:
             draw.text((x+padding, y+100), "Логов пока нет", fill=(150,150,150), font=font_normal)
         else:
             y_header = y + 95
@@ -738,13 +800,14 @@ class LogsView(View):
 
 @bot.command()
 async def L(ctx):
-    if ctx.guild.id not in log_channels:
+    channel_id = get_log_channel_db(ctx.guild.id)
+    if not channel_id:
         await ctx.send("Иди нахуй")
         return
-    if ctx.channel.id != log_channels[ctx.guild.id]:
-        await ctx.send(f"Тебе туда: <#{log_channels[ctx.guild.id]}>")
+    if ctx.channel.id != channel_id:
+        await ctx.send(f"Тебе туда: <#{channel_id}>")
         return
-    view = LogsView(ctx, ctx.guild.id, logs_list)
+    view = LogsView(ctx, ctx.guild.id)
     await view.send()
 
 class HelpView(View):
@@ -833,14 +896,14 @@ class HelpView(View):
 async def S(ctx):
     if not ctx.guild:
         return
-    view = StatsView(ctx, ctx.guild.id, messages_log)
+    view = StatsView(ctx, ctx.guild.id)
     await view.send()
 
 @bot.command()
 async def LB(ctx):
     if not ctx.guild:
         return
-    view = LeaderBoardView(ctx, ctx.guild.id, messages_log)
+    view = LeaderBoardView(ctx, ctx.guild.id)
     await view.send()
 
 @bot.command()
@@ -848,7 +911,7 @@ async def P(ctx, member: discord.Member = None):
     if not ctx.guild:
         return
     target = member or ctx.author
-    view = ProfileView(ctx, ctx.guild.id, messages_log, target)
+    view = ProfileView(ctx, ctx.guild.id, target)
     await view.send()
 
 @bot.command()
