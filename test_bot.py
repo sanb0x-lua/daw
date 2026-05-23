@@ -2,8 +2,9 @@ import discord
 from discord.ext import commands
 from aiohttp import web
 import asyncio
+import os
 
-TOKEN = "MTUwNTYxNzAyOTA4NzEwMDkyOA.G9ZWxP.biAx4clw_o3Wr3hOrfOwcopUPr3S9s6S68V79k"
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -17,7 +18,7 @@ async def on_ready():
 
 @bot.command()
 async def test(ctx):
-    await ctx.send("Долбоеб работает")
+    await ctx.send("ТЫ ДОЛБОЕБ ОШИБКА В КОДЕ БЫЛА")
 
 @bot.command()
 async def S(ctx):
