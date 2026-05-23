@@ -6,14 +6,30 @@ from datetime import datetime, timedelta, timezone
 from PIL import Image, ImageDraw, ImageFont
 import io
 import os
+import sys
 import aiohttp
 import asyncio
 from aiohttp import web
 
-# ========== НАСТРОЙКИ ==========
+PID_FILE = "bot.pid"
+
+try:
+    with open(PID_FILE, 'x') as f:
+        f.write(str(os.getpid()))
+except FileExistsError:
+    try:
+        with open(PID_FILE, 'r') as f:
+            old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)
+            print(f"Бот уже запущен (PID: {old_pid})")
+            sys.exit(0)
+    except:
+        with open(PID_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
-    TOKEN = "СЮДА_ВСТАВЬ_ТОКЕН_ЕСЛИ_НЕ_НА_RENDER"
+    TOKEN = "ой бляяя"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -26,14 +42,10 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="S!", intents=intents)
 
-# Хранилище в памяти
 messages_log = defaultdict(list)
 logs_list = defaultdict(list)
-nick_history = defaultdict(list)
-reactions_given = defaultdict(int)
-reactions_received = defaultdict(int)
+log_channels = {}
 
-# ========== ШРИФТЫ (Arial) ==========
 def get_font(size):
     try:
         return ImageFont.truetype("assets/arial.ttf", size)
@@ -42,8 +54,6 @@ def get_font(size):
             return ImageFont.truetype("arial.ttf", size)
         except:
             return ImageFont.load_default()
-
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
 def draw_rounded_rect(draw, xy, radius, fill=None):
     x1, y1, x2, y2 = xy
@@ -71,7 +81,101 @@ def format_date(dt):
 def get_msk_time():
     return datetime.now(timezone.utc + timedelta(hours=3)).strftime("%d.%m %H:%M:%S")
 
-# ========== СТАТИСТИКА СЕРВЕРА (S!S) ==========
+def add_log(guild_id, log_type, user, channel, content):
+    log_entry = {
+        "type": log_type[:25],
+        "user": user[:25],
+        "channel": channel[:20] if channel else "-",
+        "content": content[:55],
+        "time": get_msk_time()
+    }
+    logs_list[guild_id].append(log_entry)
+    if len(logs_list[guild_id]) > 1000:
+        logs_list[guild_id] = logs_list[guild_id][-800:]
+
+@bot.event
+async def on_guild_channel_create(channel):
+    if channel.guild:
+        add_log(channel.guild.id, "Создан канал", "Система", channel.name, f"#{channel.name}")
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    if channel.guild:
+        add_log(channel.guild.id, "Удалён канал", "Система", channel.name, f"#{channel.name} удалён")
+
+@bot.event
+async def on_guild_channel_update(before, after):
+    if before.guild and before.name != after.name:
+        add_log(before.guild.id, "Переимен канал", "Система", after.name, f"{before.name} -> {after.name}")
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if before.channel != after.channel:
+        if after.channel:
+            add_log(member.guild.id, "Зашёл в войс", member.name, after.channel.name, f"Вошёл в {after.channel.name}")
+        elif before.channel:
+            add_log(member.guild.id, "Вышел из войса", member.name, before.channel.name, f"Вышел из {before.channel.name}")
+
+@bot.event
+async def on_member_join(member):
+    add_log(member.guild.id, "Присоединился", member.name, "-", "Новый участник")
+
+@bot.event
+async def on_member_remove(member):
+    add_log(member.guild.id, "Покинул/Кик", member.name, "-", "Участник покинул")
+
+@bot.event
+async def on_member_ban(guild, user):
+    add_log(guild.id, "Бан", user.name, "-", "Забанен")
+
+@bot.event
+async def on_member_unban(guild, user):
+    add_log(guild.id, "Разбан", user.name, "-", "Разбанен")
+
+@bot.event
+async def on_guild_role_create(role):
+    add_log(role.guild.id, "Создана роль", "Система", role.name, "Новая роль")
+
+@bot.event
+async def on_guild_role_delete(role):
+    add_log(role.guild.id, "Удалена роль", "Система", role.name, "Роль удалена")
+
+@bot.event
+async def on_guild_role_update(before, after):
+    if before.name != after.name:
+        add_log(before.guild.id, "Переимен роль", "Система", after.name, f"{before.name} -> {after.name}")
+
+@bot.event
+async def on_message_delete(message):
+    if message.guild and message.author and not message.author.bot:
+        add_log(message.guild.id, "Удаление сообщ", message.author.name, message.channel.name, message.content[:55] if message.content else "(нет текста)")
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.guild and before.author and not before.author.bot:
+        if before.content != after.content:
+            add_log(before.guild.id, "Редакт сообщ", before.author.name, before.channel.name, f"{before.content[:30]} -> {after.content[:30]}")
+
+@bot.event
+async def on_ready():
+    print(f'Bot ready: {bot.user}')
+    if not os.path.exists("assets"):
+        os.makedirs("assets")
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.guild:
+        messages_log[message.guild.id].append({
+            "user": message.author.name,
+            "channel": message.channel.name,
+            "time": datetime.now(timezone.utc)
+        })
+        if len(messages_log[message.guild.id]) > 5000:
+            messages_log[message.guild.id] = messages_log[message.guild.id][-4000:]
+    await bot.process_commands(message)
+
 
 class StatsView(View):
     def __init__(self, ctx, guild_id, messages_log):
@@ -169,8 +273,6 @@ class StatsView(View):
         else:
             await self.ctx.send(embed=embed, file=file, view=self)
 
-# ========== ЛИДЕРБОРД (S!LB) ==========
-
 async def get_avatar_image(user):
     async with aiohttp.ClientSession() as session:
         async with session.get(user.display_avatar.url) as resp:
@@ -239,7 +341,7 @@ class LeaderBoardView(View):
         
         x, y, padding = margin, margin, 30
         period_name = {1: "1 день", 7: "7 дней", 30: "30 дней"}
-        draw.text((x+padding, y+20), f"Лидерборд - {period_name.get(self.current_days, 'все время')}", fill=(255,255,255), font=font_title)
+        draw.text((x+padding, y+20), f"Лидербоард - {period_name.get(self.current_days, 'все время')}", fill=(255,255,255), font=font_title)
         draw.text((x+padding, y+60), f"Всего участников: {len(user_counts)}", fill=(200,200,200), font=font_small)
         draw.text((x+padding, y+90), f"Страница {self.current_page+1} из {total_pages}", fill=(200,200,200), font=font_small)
         
@@ -277,8 +379,8 @@ class LeaderBoardView(View):
         btn1 = Button(label="1 день", style=discord.ButtonStyle.secondary)
         btn7 = Button(label="7 дней", style=discord.ButtonStyle.secondary)
         btn30 = Button(label="30 дней", style=discord.ButtonStyle.secondary)
-        btn_prev = Button(label="◀ Назад", style=discord.ButtonStyle.secondary)
-        btn_next = Button(label="Вперёд ▶", style=discord.ButtonStyle.secondary)
+        btn_prev = Button(label="Назад", style=discord.ButtonStyle.secondary)
+        btn_next = Button(label="Вперёд", style=discord.ButtonStyle.secondary)
         
         async def day_callback(d):
             async def callback(i):
@@ -313,8 +415,6 @@ class LeaderBoardView(View):
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         else:
             await self.ctx.send(embed=embed, file=file, view=self)
-
-# ========== ПРОФИЛЬ (S!P) ==========
 
 class ProfileView(View):
     def __init__(self, ctx, guild_id, messages_log, target_user):
@@ -500,16 +600,20 @@ class ProfileView(View):
         else:
             await self.ctx.send(embed=embed, file=file, view=self)
 
-# ========== ЛОГИ (S!L) ==========
-
-log_channels = {}
-
 @bot.command()
 async def setL(ctx, channel: discord.TextChannel = None):
     if channel is None:
         channel = ctx.channel
     log_channels[ctx.guild.id] = channel.id
-    await ctx.send(f"Лог канал: {channel.mention}")
+    await ctx.send(f"Установлено: {channel.mention}")
+
+@bot.command()
+async def delL(ctx):
+    if ctx.guild.id in log_channels:
+        del log_channels[ctx.guild.id]
+        await ctx.send("Удалено!")
+    else:
+        await ctx.send("Иди нахуй.")
 
 class LogsView(View):
     def __init__(self, ctx, guild_id, logs_list):
@@ -580,8 +684,8 @@ class LogsView(View):
         embed.set_image(url="attachment://logs.png")
         
         self.clear_items()
-        btn_prev = Button(label="◀ Назад", style=discord.ButtonStyle.secondary)
-        btn_next = Button(label="Вперёд ▶", style=discord.ButtonStyle.secondary)
+        btn_prev = Button(label="Назад", style=discord.ButtonStyle.secondary)
+        btn_next = Button(label="Вперёд", style=discord.ButtonStyle.secondary)
         btn_refresh = Button(label="Обновить", style=discord.ButtonStyle.primary)
         
         async def prev_callback(i):
@@ -613,15 +717,13 @@ class LogsView(View):
 @bot.command()
 async def L(ctx):
     if ctx.guild.id not in log_channels:
-        await ctx.send("Code: 1 (Установи канал командой S!setL #канал)")
+        await ctx.send("Иди нахуй")
         return
     if ctx.channel.id != log_channels[ctx.guild.id]:
-        await ctx.send(f"Code: 1 (Используй команду в канале <#{log_channels[ctx.guild.id]}>)")
+        await ctx.send(f"Тебе туда: <#{log_channels[ctx.guild.id]}>")
         return
     view = LogsView(ctx, ctx.guild.id, logs_list)
     await view.send()
-
-# ========== ПОМОЩЬ (S!H) ==========
 
 class HelpView(View):
     def __init__(self):
@@ -656,16 +758,17 @@ class HelpView(View):
         commands_y = y + 150
         commands = [
             ("S!S", "Статистика сервера"),
-            ("S!LB", "Лидерборд"),
+            ("S!LB", "Лидербоард"),
             ("S!P", "Профиль (S!P @user)"),
             ("S!L", "Логи сервера"),
             ("S!setL", "Установить канал для логов"),
+            ("S!delL", "Удалить канал для логов"),
             ("S!H", "Помощь")
         ]
         
         for i, (cmd, desc) in enumerate(commands):
-            draw.text((x+padding, commands_y + i*60), cmd, fill=(255,255,255), font=font_bold)
-            draw.text((x+padding+200, commands_y + i*60 + 5), desc, fill=(200,200,200), font=font_normal)
+            draw.text((x+padding, commands_y + i*55), cmd, fill=(255,255,255), font=font_bold)
+            draw.text((x+padding+200, commands_y + i*55 + 5), desc, fill=(200,200,200), font=font_normal)
         
         buf = io.BytesIO()
         img.save(buf, format='PNG')
@@ -704,89 +807,6 @@ class HelpView(View):
         else:
             await ctx.send(embed=embed, file=file, view=self)
 
-# ========== ОБРАБОТЧИКИ СОБЫТИЙ ==========
-
-def add_log(guild_id, log_type, user, channel, content):
-    log_entry = {
-        "type": log_type[:25],
-        "user": user[:25],
-        "channel": channel[:20] if channel else "-",
-        "content": content[:55],
-        "time": get_msk_time()
-    }
-    logs_list[guild_id].append(log_entry)
-    if len(logs_list[guild_id]) > 1000:
-        logs_list[guild_id] = logs_list[guild_id][-800:]
-
-@bot.event
-async def on_ready():
-    print(f'Bot ready: {bot.user}')
-    if not os.path.exists("assets"):
-        os.makedirs("assets")
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    if message.guild:
-        messages_log[message.guild.id].append({
-            "user": message.author.name,
-            "channel": message.channel.name,
-            "time": datetime.now(timezone.utc)
-        })
-        if len(messages_log[message.guild.id]) > 5000:
-            messages_log[message.guild.id] = messages_log[message.guild.id][-4000:]
-    await bot.process_commands(message)
-
-@bot.event
-async def on_message_delete(message):
-    if message.guild and message.author and not message.author.bot:
-        add_log(message.guild.id, "Удаление сообщ", message.author.name, message.channel.name, message.content[:55] if message.content else "(нет текста)")
-
-@bot.event
-async def on_message_edit(before, after):
-    if before.guild and before.author and not before.author.bot:
-        if before.content != after.content:
-            add_log(before.guild.id, "Редакт сообщ", before.author.name, before.channel.name, f"{before.content[:30]} -> {after.content[:30]}")
-
-@bot.event
-async def on_guild_channel_create(channel):
-    add_log(channel.guild.id, "Создан канал", "Система", channel.name, f"#{channel.name}")
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    add_log(channel.guild.id, "Удалён канал", "Система", channel.name, f"#{channel.name} удалён")
-
-@bot.event
-async def on_member_join(member):
-    add_log(member.guild.id, "Присоединился", member.name, "-", "Новый участник")
-
-@bot.event
-async def on_member_remove(member):
-    add_log(member.guild.id, "Покинул/Кик", member.name, "-", "Участник покинул")
-
-@bot.event
-async def on_member_ban(guild, user):
-    add_log(guild.id, "Бан", user.name, "-", "Забанен")
-
-@bot.event
-async def on_guild_role_create(role):
-    add_log(role.guild.id, "Создана роль", "Система", role.name, "Новая роль")
-
-@bot.event
-async def on_guild_role_delete(role):
-    add_log(role.guild.id, "Удалена роль", "Система", role.name, "Роль удалена")
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    if before.channel != after.channel:
-        if after.channel:
-            add_log(member.guild.id, "Зайшёл в войс", member.name, after.channel.name, f"Вошёл в {after.channel.name}")
-        else:
-            add_log(member.guild.id, "Вышел из войс", member.name, before.channel.name, f"Вышел из {before.channel.name}")
-
-# ========== КОМАНДЫ ==========
-
 @bot.command()
 async def S(ctx):
     if not ctx.guild:
@@ -813,8 +833,6 @@ async def P(ctx, member: discord.Member = None):
 async def H(ctx):
     view = HelpView()
     await view.send(ctx)
-
-# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
 
 async def health_check(request):
     return web.Response(text="Bot is alive!")
